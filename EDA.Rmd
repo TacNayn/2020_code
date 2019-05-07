@@ -1,0 +1,738 @@
+---
+title: "EDA of Final Project"
+author: "Tiantian Wu; Hao Xi; Shiyun Zou;"
+date: "4/19/2019"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup,echo = FALSE }
+knitr::opts_chunk$set(
+	message = FALSE,
+	warning = FALSE)
+```
+
+
+```{r,echo = FALSE}
+library("dslabs")
+library("dplyr")
+library("Hmisc")
+library("ggplot2")
+library("tidyverse")
+library("corrplot")
+library("gridExtra")
+library("ggcorrplot")
+library("GGally")
+library("ggpubr")
+library("standardize")
+library("leaps")
+library("magrittr")
+library("ggfortify")
+library("lmtest")
+library("car")
+library("pROC")
+library("boot")
+library("AUC")
+library("glmnet")
+library("lattice")
+library("mice")
+library("VIM")
+library("naniar")
+library("tidyr")
+library("randomForest")
+library("gridExtra")
+library("ISLR")
+library("gam")
+library("Matrix")
+library("scales")
+library("ggmap")
+library("maps")
+```
+
+
+After loading all packages that we need, we read the given data sets acs2015_census_tract_data.csv and police_killings_cleaned.csv. We check the dimensions of thes two data sets and obeserve the columns with missing data. Then, we choose the related variables based on our needs from these two data sets and merge them together. More specifically, we create the two subsets of the the original two datasets by choosing related variables and named as df1_1 and df2_1. Then, we merge datasets df1_1 and df2_1 and named as dfall.
+
+
+# Read Datasets
+
+```{r echo = TRUE}
+data_ACS <- read.csv('acs2015_census_tract_data.csv')
+data_killing <- read.csv('police_killings_cleaned.csv')
+```
+
+```{r}
+dim(data_ACS)
+dim(data_killing)
+```
+
+# Check Missing Dataset of data_killing
+
+```{r}
+gg_miss_var(data_killing)
+gg_miss_upset(data_killing)
+```
+
+# Check Missing Dataset of data_ACS
+
+```{r}
+gg_miss_var(data_ACS)
+gg_miss_upset(data_ACS)
+```
+
+
+```{r}
+colSums(is.na(data_ACS))
+```
+
+```{r}
+colSums(is.na(data_killing))
+```
+
+
+
+
+
+```{r}
+df1_1 = data_killing[c('age','gender','raceethnicity','month','year','city','state','geo_id','cause','armed','pop','share_black','p_income','h_income','county_income','county_bucket', 'nat_bucket','pov', 'urate', 'college')]
+df2_1 = data_ACS[,!names(data_ACS) %in% c('State','Unemployment')]
+```
+
+```{r}
+dfall = merge(x = df1_1, y = df2_1, by.x = "geo_id", by.y = "CensusTract", all.x=TRUE)
+```
+
+# Check Missing Dataset of dfall
+
+We observe the the quatity and distribution of missing data for each column. There are only 27 observations with missing value. So, we used the function na.omit to delete all of rows with missing data.
+
+```{r echo = TRUE}
+gg_miss_var(dfall)
+gg_miss_upset(dfall)
+```
+
+```{r}
+colSums(is.na(dfall))
+```
+
+```{r}
+nrow(dfall[!complete.cases(dfall),])
+```
+```{r}
+dfall = dfall[complete.cases(dfall),]
+```
+
+```{r}
+dfall$share_black = as.numeric(as.character(dfall$share_black))
+dfall$p_income = as.numeric(as.character(dfall$p_income))
+dfall$pov = as.numeric(as.character(dfall$pov))
+dfall$county_bucket = as.factor(dfall$county_bucket)
+dfall$nat_bucket = as.factor(dfall$nat_bucket)
+```
+
+```{r}
+dfall$isblack = dfall$raceethnicity == "Black"  
+dfall$isblack = as.factor(dfall$isblack)
+```
+
+```{r}
+dfall$citizenrate = dfall$Citizen/dfall$TotalPop
+dfall$menrate = dfall$Men/dfall$TotalPop
+dfall$womenrate = dfall$Women/dfall$TotalPop   
+```
+
+```{r}
+dfall$isarmed = dfall$armed!="No"
+```
+
+```{r}
+dim(data_killing)
+dim(data_ACS)
+dim(dfall)
+```
+
+### EDA 
+
+We start our exploratory data analysis by checking the variable distributions. In order to further explore the
+potential relationships between these variables, we also observe some interaction plots among them.
+
+# age
+
+```{r}
+ggplot(data = dfall, mapping = aes(age)) +
+  geom_histogram(aes(y=..density..), fill = 'cadetblue3')+
+  geom_density(color = 'bisque2', alpha = 0.7)+
+  labs(title=" The Density Plot of Age", 
+         x="Age",
+         y="Density")
+```
+
+```{r}
+ggplot(data = dfall, mapping = aes(x = age, fill = isblack)) + 
+  geom_bar(position = "fill", binwidth = 5)+
+  labs(title=" The Bar Plot of Age",
+       subtitle = "Black VS Others",
+         x="Age",
+         y="Proportion")
+
+ggplot(data = dfall, aes(age))+
+  geom_density(aes(fill=factor(isblack)), alpha=0.3)+
+  labs(title=" The Density Plot of Age",
+       subtitle = "Black VS Others",
+         x="Age",
+         y="Density") 
+```
+# gender
+
+```{r}
+sum(dfall$gender== "Male")
+sum(dfall$gender== "Female")
+ggplot(dfall, mapping = aes(x = gender)) +
+  geom_bar(alpha = 0.8, fill = 'cadetblue3')+
+  geom_text(aes(label = ..count..),stat = 'count', vjust = 1)+
+  labs(title=" The Bar Plot of Gender",
+       subtitle = "Female VS Male",
+       x="Gender",
+       y="Count")
+
+ggplot(dfall, mapping = aes(x = gender, fill = isblack)) + 
+  geom_bar(position = "fill",alpha = 0.7)+
+  labs(title=" The Bar Plot of Gender",
+       subtitle = "The Proportion of Black in Female and Male",
+       x="Gender",
+       y="Proportion") 
+```
+# raceethnicity
+
+```{r}
+ggplot(dfall, mapping = aes(x = raceethnicity)) +
+  geom_bar(alpha = 0.8, fill = 'cadetblue3')+
+  theme(axis.text.x=element_text(angle =- 15, vjust = 0.5))+
+  geom_text(aes(label = ..count..),stat = 'count', vjust = 1)
+  labs(title= "The Bar Plot of Raceethnicity",
+       x= "Raceethnicity",
+       y= "Count")
+  
+dfall%>%
+  group_by(raceethnicity) %>%
+  summarise(volume = n()) %>%
+  mutate(share=volume/sum(volume)) %>%
+  ungroup() %>% 
+  arrange(desc(volume)) %>%
+  mutate(raceethnicity=factor(raceethnicity, levels = as.character(raceethnicity))) %>%
+  ggplot(mapping = aes(x="", y= share, fill=raceethnicity)) +
+   geom_col(alpha = 0.7) +
+   #geom_text(aes(label = scales::percent(round(share,3))), position = position_stack(vjust = 0.1))+
+   coord_polar(theta = "y") + 
+   theme_void()+
+  labs(title=" The Pie Chart of Raceethnicity")
+
+```
+  
+# month
+
+```{r}
+ggplot(dfall, aes(x = month, fill = isblack)) +
+  geom_bar(alpha = 0.7)+
+  #geom_text(aes(label = ..count..),stat = 'count', vjust = 1)+
+  labs(title=" The Bar Plot of Month",
+       x="Month",
+       y="Count")
+
+ggplot(dfall, aes(x = month, fill = isblack)) +
+  geom_bar(position = "fill",alpha = 0.7)+
+  labs(title=" The Bar Plot of Month",
+       subtitle = "Black VS Others",
+       x="Month",
+       y="Proportion")
+```
+
+# state
+
+Because we want to geographically observe the population of killed people in each state, we select the columns "longitude", "latitude","raceethnicity" as the subset of the data set data_killing. Then, we use the cleaned sub-dataset to plot three maps on state level. 
+```{r}
+ggplot(dfall, aes(x = state, fill = isblack)) +
+  geom_bar(position = "fill",alpha = 0.7)+
+  theme(axis.text.x=element_text(angle =- 90, vjust = 0.5))+
+  labs(title=" The Bar Plot of State",
+       subtitle = "Black VS Others",
+       x="State",
+       y="Proportion")
+```
+
+
+```{r}
+mapdt = data_killing[c("longitude", "latitude","raceethnicity")]
+```
+
+
+```{r}
+mapdt2 = mapdt[mapdt$longitude > -130 & mapdt$longitude < -50,] 
+```
+
+```{r}
+mapgilbert <- get_stamenmap(bbox = c(left = -130, bottom = 20, right =
+  -50, top = 50), zoom = 5, maptype = c("toner-lite"),
+  crop = FALSE, messaging = FALSE, urlonly = FALSE,
+  color = c("color", "bw"))
+ggmap(mapgilbert) + geom_point(aes(x = longitude, y = latitude), data = mapdt2[mapdt2$raceethnicity=="Black", ], alpha = .5, color="darkblue") 
+ggmap(mapgilbert) + geom_point(aes(x = longitude, y = latitude), data = mapdt2[mapdt2$raceethnicity!="Black", ], alpha = .5, color="darkblue") 
+```
+
+```{r}
+states <- map_data("state")
+```
+
+```{r}
+mapdat = data_ACS[c("State","TotalPop","Black")]
+mapdat$blackppl = mapdat$TotalPop * mapdat$Black/100
+mapdat[is.na(mapdat)] <- 0
+```
+
+```{r}
+mapdat = aggregate(mapdat[c("TotalPop", "blackppl")], by=list(state=mapdat$State), FUN=sum)
+mapdat$blackprob = mapdat$blackppl / mapdat$TotalPop
+mapdat$state = tolower(mapdat$state)
+```
+
+```{r}
+sim_data_geo <- merge(states, mapdat, by.x="region", by.y = "state", all.x=TRUE)
+ggplot(sim_data_geo, aes(long, lat)) + geom_polygon(aes(group=group, fill=blackprob)) + scale_fill_gradient(low = "white", high = "hotpink")
+```
+
+```{r}
+killarst = data_killing[c("raceethnicity","state", "geo_id","pop","share_black")]
+killarst$isblack = killarst$raceethnicity =="Black"
+killarst$state=as.character(killarst$state)
+```
+
+```{r}
+df1 = plyr::count(killarst, c('isblack','state'))
+df1 = df1[df1$isblack==TRUE, ]
+df2 = plyr::count(killarst, c('state'))
+df3 = merge(x = df1, y = df2, by = "state", all.y = TRUE)
+df3$freq.x[is.na(df3$freq.x)] <- 0
+df3$killprob = df3$freq.x/df3$freq.y
+df3 = df3[c("state","freq.x","freq.y","killprob")]
+statename = data.frame(state.name, state.abb)
+statename$state.name = as.character(statename$state.name)
+statename$state.abb = as.character(statename$state.abb)
+statename = statename %>% add_row(state.name = "Puerto Rico", state.abb = "PR") %>% 
+  add_row(state.name = "District of Columbia", state.abb = "DC")
+dfs1 = data_ACS[c("State", "TotalPop","Black")]
+dfs1 = dfs1[complete.cases(dfs1),]
+dfs1$State = as.character(dfs1$State)
+dfs1$blackpop = dfs1$TotalPop*dfs1$Black/100
+dfs1 = aggregate(dfs1[c("TotalPop","blackpop")], by=list(State=dfs1$State), FUN=sum)
+dfs1$b_prop = dfs1$blackpop/dfs1$TotalPop   
+dfs1 = merge(x=dfs1, y = statename, by.x="State", by.y="state.name",all.x = TRUE)
+d_test = merge(x=df3, y=dfs1, by.x = "state", by.y = "state.abb", all.x = TRUE)
+d_test$probdiff = d_test$killprob-d_test$b_prop
+```
+
+```{r}
+ggplot(data = d_test) +
+  geom_bar(mapping = aes(x = factor(state), y = killprob ), stat = "identity",width = 0.5, fill = 'bisque2', alpha = 0.9) +
+  geom_bar(mapping = aes(x = factor(state), y = b_prop ), stat = "identity", width = 0.5, fill = 'skyblue', alpha = 0.7) +
+  theme(axis.text.x=element_text(angle =- 90, vjust = 0.5))+
+  theme(legend.position="right")+
+  labs(title=" The Proportion of Black Given Killed & The Proportion of Black (State Level)",
+       x="State Name",
+       y="Proportion")
+```
+
+# cause
+
+```{r}
+ggplot(dfall, aes(x = cause)) +
+  geom_bar(alpha = 0.8,fill = 'cadetblue3')+
+  geom_text(aes(label = ..count..),stat = 'count', vjust = 1)+
+  labs(title=" The Bar Plot of Cause",
+       x="Cause",
+       y="Count")
+
+dfall%>%
+  group_by(cause) %>%
+  summarise(volume = n()) %>%
+  mutate(share=volume/sum(volume)) %>%
+  ungroup() %>% 
+  arrange(desc(volume)) %>%
+  mutate(cause=factor(cause, levels = as.character(cause)))%>%
+  ggplot(aes(x="", y= share, fill=cause)) +
+   geom_col(alpha = 0.8) +
+   #geom_text(aes(label = scales::percent(round(share,3))), position = position_stack(vjust = 0.1))+
+   coord_polar(theta = "y") + 
+   theme_void()+
+  labs(title=" The Pie Chart of Cause")
+
+
+```
+
+# armed
+
+```{r}
+ggplot(dfall, aes(x = armed)) +
+  geom_bar(alpha = 0.8,fill = 'cadetblue3')+
+  geom_text(aes(label = ..count..),stat = 'count', vjust = 1)+
+  labs(title=" The Bar Plot of Armed",
+       x="Armed",
+       y="Count")
+
+dfall %>%
+  group_by(armed) %>%
+  summarise(volume = n()) %>%
+  mutate(share=volume/sum(volume)) %>%
+  ungroup() %>% 
+  arrange(desc(volume)) %>%
+  mutate(isarmed=factor(armed, levels = as.character(armed)))%>%
+  ggplot(aes(x="", y= share, fill=armed)) +
+   geom_col(alpha = 0.8) +
+   #geom_text(aes(label = scales::percent(round(share,3))), position = position_stack(vjust = 0.1))+
+   coord_polar(theta = "y") + 
+   theme_void()+
+  labs(title=" The Pie Chart of Armed")
+
+
+ggplot(dfall, aes(x = isarmed, fill = isblack)) +
+  geom_bar(position = 'fill', alpha = 0.7)+
+  labs(title=" The Bar Plot of Armed",
+       x="Unarmed VS Armed",
+       y="Proportion")
+
+table(dfall$isarmed, dfall$cause)
+```
+
+# pop(population)
+
+```{r}
+ggplot(data = dfall, mapping = aes(pop)) +
+  geom_histogram(aes(y=..density..), fill = 'cadetblue3')+
+  geom_density(color = 'bisque2', alpha = 0.7)+
+  labs(title=" The Density Plot of Population", 
+         x="Population",
+         y="Density")
+ggplot(data = dfall, aes(pop))+
+  geom_density(aes(fill=factor(isblack)), alpha=0.3)+
+  labs(title=" The Density Plot of Population",
+       subtitle = "Black VS Others",
+         x="Population",
+         y="Density") 
+ 
+```
+
+```{r}
+ggplot(data = dfall, aes(x = pop, y = share_black, color = isblack))+
+  geom_point(alpha = 0.8)+
+  geom_smooth(se = F)+
+  labs(title="Pop VS Share_Black",
+         x="Pop",
+         y="Share_Black")
+```
+
+# Economic Variables
+(p_income, h_income, county_income, county_bucket, nat_bucket )
+```{r}
+ggplot(data = dfall)+
+  geom_density(mapping = aes(x= p_income), fill = 'bisque2', alpha=0.3)+
+  geom_density(mapping = aes(x= h_income), fill = 'cadetblue3', alpha=0.3)+
+  geom_density(mapping = aes(x= county_income), fill = 'hotpink', alpha=0.3)+
+  labs(x= "p_income & h_income & county_income")
+  
+ggplot(data = dfall, mapping = aes(x = p_income, y =  h_income ,color = county_income)) + 
+  geom_point()+
+  labs(title="The Scatter Plot of p_income & h_income & county_income",
+       x="p_income",
+       y="h_income")
+ggplot(data = dfall, mapping = aes(x = p_income, y = h_income,color = county_bucket)) + 
+  geom_point()+
+  labs(title="The Scatter Plot of p_income & h_income & county_bucket",
+       x="p_income",
+       y="h_income")
+ggplot(data = dfall, mapping = aes(x = p_income, y = h_income,color = nat_bucket)) + 
+  geom_point()+
+  labs(title="The Scatter Plot of p_income & h_income & nat_bucket",
+       x="p_income",
+       y="h_income")
+
+income_varibles = c('p_income','h_income','county_income')
+ggcorr(dfall[, income_varibles], palette = "RdGy", label = TRUE, label_size = 2,hjust = 0.95,size = 2.0)
+```
+
+# Poverty Rate (pov)
+
+```{r}
+ggplot(data = dfall, mapping = aes(pov)) + 
+  geom_density(mapping = aes(fill=factor(isblack)), alpha=0.3)+
+  labs(title="The Density Plot of Poverty Rate",
+       x="Poverty Rate",
+       y="Density")
+```
+
+#college
+
+```{r}
+ggplot(data = dfall, mapping = aes(college)) + 
+  geom_density(aes(fill=factor(isblack)), alpha=0.3)+
+  labs(title="The Density Plot of College",
+       x="College",
+       y="Density")
+ggplot(data = dfall, mapping = aes(x = isblack, y = college )) + 
+  geom_boxplot(aes(fill=factor(isblack)))+
+  labs(title="The Box Plot of College",
+       subtitle = "Black VS Others",
+       x="Black VS Others",
+       y="College")
+ggplot(data = dfall, mapping = aes(x = college, y = share_black)) + 
+  geom_point(color = 'cadetblue3', alpha = 0.8)+
+  geom_smooth(se = F,color = 'bisque2')+
+  labs(title="The Scatter Plot of college & share_black",
+       subtitle = "Black VS Others",
+       x="College",
+       y="share_black")
+```
+
+# urate (Unemployemnt Rate)
+
+```{r}
+ggplot(data = dfall, mapping = aes(urate)) + 
+  geom_density(aes(fill=factor(isblack)), alpha=0.3)+
+  labs(title="The Density Plot of urate",
+       x="urate",
+       y="Density")
+ggplot(data = dfall, mapping = aes(x = isblack, y = urate )) + 
+  geom_boxplot(aes(fill=factor(isblack)))+
+  labs(title="The Box Plot of urate",
+       subtitle = "Black VS Others",
+       x="Black VS Others",
+       y="urate")
+ggplot(data = dfall, mapping = aes(x = urate, y = share_black)) +
+  geom_point(color = 'cadetblue3', alpha = 0.7)+
+  geom_smooth(color = 'bisque2', se = F)+
+  labs(title="The Scatter Plot of urate & share_black",
+       x="Unemployment Rate",
+       y="Share_black")
+```
+
+# TotalPop & Citizen
+```{r}
+ggplot(data = dfall, mapping = aes(x = TotalPop)) + 
+  geom_freqpoly(mapping = aes(colour = isblack), binwidth = 500)
+ggplot(data = dfall, mapping = aes(x = Citizen)) + 
+  geom_freqpoly(mapping = aes(colour = isblack), binwidth = 500)
+
+```
+
+```{r}
+ggplot(data = dfall, mapping = aes(x = citizenrate,y = share_black)) + 
+  geom_point(alpha = 0.8, color = "cadetblue3")+
+  geom_smooth(se = F, color = 'bisque2')
+```
+
+# EDA (County Level)
+
+```{r}
+dfmega = merge(x = data_killing, y = data_ACS, by.x = "geo_id", by.y = "CensusTract", all.x=TRUE)
+dfmega = dfmega %>% select(c("geo_id", "County", "pop", "share_white", "share_black", "share_hispanic", "pov", "college", "Men", "Citizen", "IncomePerCap", "ChildPoverty", "Unemployment","TotalPop"))
+```
+
+```{r}
+nrow(dfmega[!complete.cases(dfmega),])
+dfmega = dfmega[complete.cases(dfmega),]
+```
+
+```{r}
+dfmega$share_black = as.numeric(as.character(dfmega$share_black))
+# dfmega$share_black = dfmega$share_black*dfmega$pop/100
+dfmega$share_white = as.numeric(as.character(dfmega$share_white))
+# dfmega$share_white = dfmega$share_white*dfmega$pop/100
+dfmega$share_hispanic = as.numeric(as.character(dfmega$share_hispanic))
+# dfmega$share_hispanic = dfmega$share_hispanic*dfmega$pop/100
+dfmega$pov = as.numeric(as.character(dfmega$pov))
+dfmega$Men = dfmega$Men/dfmega$TotalPop*100
+dfmega$Citizen = dfmega$Citizen/dfmega$TotalPop*100
+dfmega$college = dfmega$college*100
+# dfmega$pov = dfmega$pov*dfmega$pop/100
+```
+
+```{r}
+colnames(dfmega)
+```
+
+```{r}
+col = c("share_white", "share_black", "share_hispanic", "pov", "college", "Men", "Citizen", "ChildPoverty", "Unemployment")
+```
+
+
+```{r}
+summary(dfmega)
+```
+
+```{r}
+for (i in 1:9) {
+  dfmega[col[i]] = dfmega[col[i]]*dfmega$pop
+}
+dfmega$IncomePerCap = dfmega$IncomePerCap*dfmega$pop
+```
+
+```{r}
+dfmega = as.data.frame(append(dfmega, 1.0)) 
+colnames(dfmega)[15] = "count"
+dfcounty = aggregate(dfmega[c("pop", "IncomePerCap", col, "count")], by=list(county=dfmega$County), FUN=sum)
+for (i in 1:9) {
+  dfcounty[col[i]] = dfcounty[col[i]]/dfcounty$pop/100
+}
+dfcounty$IncomePerCap = dfcounty$IncomePerCap/dfcounty$pop
+```
+
+```{r}
+dim(dfcounty)
+colnames(dfcounty)
+```
+
+
+
+```{r}
+plot1<- ggplot(dfcounty, aes(x = pop))+
+  geom_density(fill = 'cadetblue3')+
+  labs(x="Population",
+         y="Density")
+plot2<- ggplot(dfcounty, aes(x = IncomePerCap))+
+  geom_density(fill = 'cadetblue3')+
+  labs(x="IncomePerCap",
+         y="Density")
+plot3<-ggplot(dfcounty, aes(x = pov))+
+  geom_density(fill = 'cadetblue3')+
+  labs(x="Poverty",
+         y="Density")
+plot4<-ggplot(dfcounty, aes(x = college))+
+  geom_density(fill = 'cadetblue3')+
+  labs(x="College",
+         y="Density")
+plot5<-ggplot(dfcounty, aes(x = Men))+
+  geom_density(fill = 'cadetblue3')+
+  labs(x="Men",
+         y="Density")
+plot6<-ggplot(dfcounty, aes(x = Citizen))+
+  geom_density(fill = 'cadetblue3')+
+  labs(x="Citizen",
+         y="Density")
+plot7<-ggplot(dfcounty, aes(x = ChildPoverty))+
+  geom_density(fill = 'cadetblue3')+
+  labs(x="ChildPoverty",
+         y="Density")
+plot8<-ggplot(dfcounty, aes(x = Unemployment))+
+  geom_density(fill = 'cadetblue3')+
+  labs(x="Unemployment",
+         y="Density")
+grid.arrange(plot1,plot2,plot3,plot4,plot5,plot6,plot7,plot8, ncol = 2)
+```
+
+
+```{r}
+ggplot(data = dfcounty, mapping = aes(x = count)) + 
+  geom_histogram(aes(y=..density..), fill = 'cadetblue3')+
+  geom_density(color = 'bisque2')+
+  labs(title="The Histogram Plot of People Killed",
+       x="The Number of People Killed",
+       y="Count")
+```
+
+```{r}
+CountyLevel_varibles = c('pop','IncomePerCap','share_white', 'share_black', 'share_hispanic', 'pov', 'college', 'Citizen', 'ChildPoverty', 'Unemployment')
+ggcorr(dfcounty[, CountyLevel_varibles], palette = "RdGy", label = TRUE, label_size = 2,hjust = 0.95,size = 2.0)
+```
+
+  
+```{r}
+plot1 <- ggplot(data = dfcounty, aes(x = share_black, y = pop))+
+  geom_point(color = 'cadetblue3',alpha= 0.8)+
+  labs(x="Share_Black",
+         y="Pop")
+plot2 <- ggplot(data = dfcounty, aes(x = share_white, y = pop))+
+  geom_point(color = 'cadetblue3',alpha= 0.8)+
+  labs(x="Share_White",
+         y="Pop")
+plot3 <- ggplot(data = dfcounty, aes(x = share_hispanic, y = pop))+
+  geom_point(color = 'cadetblue3',alpha= 0.8)+
+  labs(x="Share_Hispanic",
+         y="Pop")
+grid.arrange(plot1,plot2,plot3, ncol = 3)
+
+```
+
+
+```{r}
+
+plot1 <- ggplot(data = dfcounty, aes(x = share_black, y = pov))+
+  geom_point(color = 'cadetblue3', alpha = 0.8)+
+  labs(title="Share_black & pov",
+         x="Share_Black",
+         y="pov")
+plot2 <- ggplot(data = dfcounty, aes(x = share_black, y = ChildPoverty))+
+  geom_point(color = 'cadetblue3', alpha = 0.8)+
+  labs(title="Share_black & ChildPoverty",
+         x="Share_Black",
+         y="ChildPoverty")
+plot3 <- ggplot(data = dfcounty, aes(x = share_black, y = Unemployment))+
+  geom_point(color = 'cadetblue3', alpha = 0.8)+
+  labs(title="Share_black & Unemployment",
+         x="Share_Black",
+         y="Uemployment")
+grid.arrange(plot1,plot2,plot3, ncol = 3)
+
+```
+
+
+```{r}
+ggplot(data = dfcounty, mapping = aes(x = pop, y =  count)) + 
+  geom_point(alpha=0.7, color = 'cadetblue3')+
+  labs(title=" Population VS Count",
+       x="Population",
+       y="Count")
+ggplot(data = dfcounty, mapping = aes(x = IncomePerCap, y = count)) + 
+  geom_point(alpha=0.7,color = 'cadetblue3')+
+  labs(title=" IncomePerCap VS Count",
+       x="IncomePerCap",
+       y="Count")
+ggplot(data = dfcounty, mapping = aes(x = pov, y =  count)) + 
+  geom_point( alpha=0.7, color = 'cadetblue3')+
+  labs(title=" Poverty Rate VS Count",
+       x="Poverty Rate",
+       y="Count")
+ggplot(data = dfcounty, mapping = aes(x = college, y =  count)) + 
+  geom_point( alpha=0.7, color = 'cadetblue3')+
+  labs(title=" College VS Count",
+       x="College",
+       y="Count")
+ggplot(data = dfcounty, mapping = aes(x = Men, y =  count)) + 
+  geom_point( alpha=0.7, color = 'cadetblue3')+
+  labs(title=" Men VS Count",
+       x="Men",
+       y="Count")
+ggplot(data = dfcounty, mapping = aes(x = Citizen, y =  count)) + 
+  geom_point(alpha=0.7, color = 'cadetblue3')+
+  labs(title=" Citizen VS Count",
+       x="Citizen",
+       y="Count")
+ggplot(data = dfcounty, mapping = aes(x = ChildPoverty, y =  count)) + 
+  geom_point( alpha=0.7, color = 'cadetblue3')+
+  labs(title=" ChildPoverty VS Count",
+       x="ChildPoverty",
+       y="Count")
+ggplot(data = dfcounty, mapping = aes(x = Unemployment, y =  count)) + 
+  geom_point( alpha=0.7, color = 'cadetblue3')+
+  labs(title=" Unemployment VS Count",
+       x="Unemployment",
+       y="Count")
+ggplot(data = dfcounty, mapping = aes(x = share_black, y =  count)) + 
+  geom_point( alpha=0.7, color = 'cadetblue3')+
+  labs(title=" Share_Black VS Count",
+       x="Share_Black",
+       y="Count")
+
+```
+
+
+
+

@@ -1,0 +1,334 @@
+---
+title: ""
+output:
+  pdf_document: default
+  html_document:
+    keep_md: TRUE
+    highlight: pygments
+    theme: cerulean
+  word_document: default
+---
+
+----
+
+**Code for Model**  
+
+----
+
+```{R}
+library(dplyr)
+library(ggplot2)
+library(ggfortify)
+library(GGally)
+library(Hmisc)
+library(glmnet)
+library(pROC)
+library(MLmetrics)
+library(mice)
+library(BBmisc)
+library(gam)
+# library(naniar)
+library(mgcv)
+library(plyr)
+
+library(purrr, warn.conflicts = FALSE, quietly=TRUE)
+library(tidyr, warn.conflicts = FALSE, quietly=TRUE)
+library(cowplot, warn.conflicts = FALSE, quietly=TRUE)
+library(corrplot, warn.conflicts = FALSE, quietly=TRUE)
+library(pander, warn.conflicts = FALSE, quietly=TRUE)
+library(DAAG, warn.conflicts = FALSE, quietly=TRUE)
+library(lmtest, warn.conflicts = FALSE, quietly=TRUE)
+```
+
+
+
+# load data
+```{R}
+killing <- read.csv("police_killings_cleaned.csv")
+survey <- read.csv("acs2015_census_tract_data.csv")
+# killing$share_black <- as.numeric(as.character(killing$share_black))
+```
+
+```{R}
+# get column names
+colnames(killing)   
+#sapply(killing, class)
+```
+# Hypothesis testing    
+## Aggregate data   
+Calculate the difference between proportion of African American given killed and the proportion of African American in each state   
+```{r}
+killarst = killing[c("raceethnicity","state", "geo_id","pop","share_black")]
+killarst$isblack = killarst$raceethnicity =="Black"
+killarst$state=as.character(killarst$state)
+df1 = count(killarst, c('isblack','state'))
+df1 = df1[df1$isblack==TRUE, ]
+df2 = count(killarst, c('state'))
+df3 = merge(x = df1, y = df2, by = "state", all.y = TRUE)
+df3$freq.x[is.na(df3$freq.x)] <- 0
+df3$killprob = df3$freq.x/df3$freq.y
+df3 = df3[c("state","freq.x","freq.y","killprob")]
+statename = data.frame(state.name, state.abb)
+statename$state.name = as.character(statename$state.name)
+statename$state.abb = as.character(statename$state.abb)
+statename = statename %>% add_row(state.name = "Puerto Rico", state.abb = "PR") %>% 
+  add_row(state.name = "District of Columbia", state.abb = "DC")
+dfs1 = survey[c("State", "TotalPop","Black")]
+dfs1 = dfs1[complete.cases(dfs1),]
+dfs1$State = as.character(dfs1$State)
+dfs1$blackpop = dfs1$TotalPop*dfs1$Black/100
+dfs1 = aggregate(dfs1[c("TotalPop","blackpop")], by=list(State=dfs1$State), FUN=sum)
+dfs1$b_prop = dfs1$blackpop/dfs1$TotalPop   
+dfs1 = merge(x=dfs1, y = statename, by.x="State", by.y="state.name",all.x = TRUE)
+```
+
+```{r}
+d_test = merge(x=df3, y=dfs1, by.x = "state", by.y = "state.abb", all.x = TRUE)
+```
+
+```{r}
+d_test$probdiff = d_test$killprob-d_test$b_prop
+```
+
+There are a few states with *probdiff* < 0, but that is likely due to lack of data (those states only have a few instances)
+```{r}
+d_test
+```
+Run t-test, the p value and confidence interval indicates that the difference between proportion of African American given killed and the proportion of African American in each state are likely to be positive. 
+```{r}
+t.test(d_test$probdiff)
+```
+
+# Model 1, Poisson regression   
+Load data 
+```{r}
+dfmega = merge(x = killing, y = survey, by.x = "geo_id", by.y = "CensusTract", all.x=TRUE)
+dfmega = dfmega %>% select(c("geo_id", "County", "pop", "share_white", "share_black", "share_hispanic", "pov", "college", "Men", "Citizen", "IncomePerCap", "ChildPoverty", "Unemployment","Professional","Service","Drive","Transit","TotalPop"))
+```
+Remove empty value because there are only a few of them   
+```{r}
+nrow(dfmega[!complete.cases(dfmega),])
+```
+
+```{r}
+dfmega = dfmega[complete.cases(dfmega),]
+```
+
+Change a few datatypes   
+```{r}
+dfmega$share_black = as.numeric(as.character(dfmega$share_black))
+# dfmega$share_black = dfmega$share_black*dfmega$pop/100
+dfmega$share_white = as.numeric(as.character(dfmega$share_white))
+# dfmega$share_white = dfmega$share_white*dfmega$pop/100
+dfmega$share_hispanic = as.numeric(as.character(dfmega$share_hispanic))
+# dfmega$share_hispanic = dfmega$share_hispanic*dfmega$pop/100
+dfmega$pov = as.numeric(as.character(dfmega$pov))
+dfmega$Men = dfmega$Men/dfmega$TotalPop*100
+dfmega$Citizen = dfmega$Citizen/dfmega$TotalPop*100
+dfmega$college = dfmega$college*100
+# dfmega$pov = dfmega$pov*dfmega$pop/100
+```
+
+```{r}
+colnames(dfmega)
+```
+
+Calculate county level statistics   
+```{r}
+col = c("share_white", "share_black", "share_hispanic", "pov", "college", "Men", "Citizen", "ChildPoverty", "Professional","Service","Drive","Transit", "Unemployment")
+```
+
+```{r}
+for (i in 1:13) {
+  dfmega[col[i]] = dfmega[col[i]]*dfmega$pop
+}
+dfmega$IncomePerCap = dfmega$IncomePerCap*dfmega$pop
+```
+
+```{r}
+dfmega = as.data.frame(append(dfmega, 1.0)) 
+colnames(dfmega)[19] = "count"
+```
+
+```{r}
+dfcounty = aggregate(dfmega[c("pop", "IncomePerCap", col, "count")], by=list(county=dfmega$County), FUN=sum)
+```
+
+```{r}
+for (i in 1:13) {
+  dfcounty[col[i]] = dfcounty[col[i]]/dfcounty$pop/100
+}
+dfcounty$IncomePerCap = dfcounty$IncomePerCap/dfcounty$pop
+```
+
+```{r}
+dfcounty$IncomePerCap = normalize(dfcounty$IncomePerCap, method = "range", range = c(0, 1))
+dfcounty$pop = normalize(dfcounty$pop, method = "range", range = c(0, 1))
+```
+
+```{r}
+dfcounty
+```
+
+Converte data to matrix  
+```{r}
+Xv = model.matrix(count~.-county, dfcounty)[,-1]
+yv = dfcounty$count
+grid = 10^seq(3, -10, length = 500)
+```
+
+```{r}
+hist(dfcounty$count)
+```
+
+```{r}
+plot(glmnet(Xv, yv, alpha=1, lambda = grid, family = "poisson"),xvar="lambda")   
+```
+
+Run poisson regression with L1 regulization, cross validation to find penalty weight   
+```{r}
+cvfitlasso = cv.glmnet(Xv, yv, alpha=1, lambda = grid, family = "poisson", type.measure = "deviance")
+```
+
+```{r}
+plot(cvfitlasso)
+```
+cv result of penalty weight   
+```{r}
+cvfitlasso$lambda.min
+```
+result of the model  
+```{r}
+coef(cvfitlasso)
+```
+
+```{r}
+glmnet(Xv, yv, alpha=1, lambda = cvfitlasso$lambda.min, family = "poisson")
+```
+
+According to the result, basically, no other features explains how many people got killed in the county except the population. 
+
+# Model 2, logistic regression   
+Load data  
+```{r}
+df1_1 = killing[c('age','gender','raceethnicity','month','year','city','state','geo_id','cause','armed','pop','share_black','p_income','h_income','county_income','county_bucket', 'nat_bucket','pov', 'urate', 'college')]
+df2_1 = survey[,!names(survey) %in% c('State','Unemployment')]
+
+```
+
+```{r}
+dfall = merge(x = df1_1, y = df2_1, by.x = "geo_id", by.y = "CensusTract", all.x=TRUE)
+```
+
+```{r}
+colSums(is.na(dfall))
+```
+Remove empty values because there are only a few of them   
+```{r}
+nrow(dfall[!complete.cases(dfall),])
+```
+
+```{r}
+dfall = dfall[complete.cases(dfall),]
+```
+Convert a few variables  
+```{r}
+dfall$share_black = as.numeric(as.character(dfall$share_black))
+dfall$p_income = as.numeric(as.character(dfall$p_income))
+dfall$pov = as.numeric(as.character(dfall$pov))
+dfall$county_bucket = as.factor(dfall$county_bucket)
+dfall$nat_bucket = as.factor(dfall$nat_bucket)
+```
+
+```{r}
+dfall$isblack = dfall$raceethnicity == "Black"  
+dfall$isblack = as.factor(dfall$isblack)
+```
+
+```{r}
+dfall$citizenrate = dfall$Citizen/dfall$TotalPop
+dfall$menrate = dfall$Men/dfall$TotalPop
+dfall$womenrate = dfall$Women/dfall$TotalPop   
+```
+
+```{r}
+dfall$isarmed = dfall$armed!="No"
+```
+
+The following function calculates the AUC   
+```{r}
+getauc <- function (model) {
+  tempp = predict(model, dfall, type="response")
+  roc = pROC::roc(dfall$isblack, tempp)
+  pROC::auc(roc)
+}
+
+```
+
+Fit a model with forward selection using AIC   
+```{r, include=FALSE}
+glm.null = glm(isblack~1,data=dfall, family="binomial")
+glm.full = glm(isblack~.-geo_id-raceethnicity-year-cause-city-state-County-TotalPop-armed-Citizen-Men-Women, data = dfall, family="binomial")  
+forward.glm = step(glm.null,scope=list(lower=glm.null,upper=glm.full), direction="forward", k = 2)
+```
+
+In the full model, some variables has high VIF. It is reasonable to see this because for example, poverty rate should be somewhat related to the county's median income. Moreover, a richer area is likely to have higher education rate.   
+```{r}
+vif(glm.full)
+```
+
+Result of forward selection:  
+
+```{r, echo = FALSE}
+panderOptions('table.continues', '')
+set.alignment('left', row.names = 'right')
+pander(summary(forward.glm), type = 'grid', style = "simple", add.significance.stars = TRUE, split.table = 200)
+```
+Pacific and OtherTransp are not significant. I then tried to remove these two variables and built a reduced model   
+```{r}
+glmreduced = glm(isblack~share_black+county_income+age+pop+Carpool+SelfEmployed+Office+isarmed, data = dfall, family="binomial")
+```
+
+```{r}
+getauc(glmreduced)
+```
+According to the LR test, there is no significant envidence to show that the forward selection model is better than the reduced model 
+```{r}
+lrtest(forward.glm, glmreduced)   
+```
+
+
+We tried to add few interaction terms such as isarmed*age. But after doing a LR test, there is no significant envidence to show that adding the interaction will make the model better. So we did not ended up with any interaction terms.  
+```{r}
+glm_int = glm(isblack~share_black+county_income+age+pop+Carpool+SelfEmployed+Office+isarmed+isarmed*age, data = dfall, family="binomial")
+lrtest(glm_int, glmreduced)
+```
+
+Therefore, we choose the reduced model   
+```{r}
+pander(summary(glmreduced), type = 'grid', style = "simple", add.significance.stars = TRUE, split.table = 200)
+```
+
+
+Checking the Residual and Leverage of the model, there are a few high leverage points and high residual points. But there is not point with high cook's distance, which means there are no influencial outliers.    
+```{r}
+plot(glmreduced, which =5)
+```
+
+We checked the caliberation. I sorted the data by prediction probability and break them into 10 groups. Within each group, I checked the average predicted probability and the percentage of African Americans. They look fairly similar. Therefore, the model seem to be well calibrated.    
+```{r}
+pred = predict(glmreduced, dfall, type="response")   
+```
+
+```{r, echo=FALSE}
+ordering = order(pred)
+avg.probs = numeric(10)
+avg.kill = numeric(10)
+for (i in 1:10){
+  start = (i-1)*47+1
+  end = min(467,start+47)
+  avg.probs[i] = mean(pred[ordering[start:end]])
+  avg.kill[i] = mean(dfall$isblack[ordering[start:end]] == TRUE)
+}
+ggplot()+geom_point(aes(x=avg.probs,y=avg.kill))+geom_abline(aes(slope=1,intercept=0),col="red")
+```
